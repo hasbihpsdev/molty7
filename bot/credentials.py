@@ -173,3 +173,11 @@ def save_credentials_by_name(agent_name: str, data: dict):
     path = agent_dir / "credentials.json"
     _write_secure(path, data)
     log.info("Credentials saved for %s to %s", agent_name, path)
+
+
+def generate_agent_suffix(length: int = 5) -> str:
+    """Generate a random lowercase suffix for agent names."""
+    import random
+    import string
+    chars = string.ascii_lowercase + string.digits
+    return ''.join(random.choice(chars) for _ in range(length))

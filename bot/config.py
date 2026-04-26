@@ -53,7 +53,8 @@ MEMORY_FILE = MEMORY_DIR / "molty-royale-context.json"
 
 # ── Environment variables ─────────────────────────────────────────────
 AGENT_NAME = os.getenv("AGENT_NAME", "")
-AGENT_NAMES = os.getenv("AGENT_NAMES", "")  # comma-separated: "Agus,Budi,Susilo"
+AGENT_BASE_NAME = os.getenv("AGENT_BASE_NAME", "")  # single base name for multi-agent
+AGENT_COUNT = int(os.getenv("AGENT_COUNT", "1"))    # number of agents to run
 MULTI_MODE = os.getenv("MULTI_MODE", "").lower() in ("true", "1", "yes")
 ADVANCED_MODE = os.getenv("ADVANCED_MODE", "true").lower() == "true"
 ROOM_MODE = os.getenv("ROOM_MODE", "free")  # free | auto | paid

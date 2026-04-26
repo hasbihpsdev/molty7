@@ -20,9 +20,10 @@ from bot.credentials import (
     load_agent_wallet, load_owner_wallet, update_env_file,
     load_agent_wallet_by_name, save_agent_wallet_by_name,
     load_credentials_by_name, save_credentials_by_name, get_agent_dir,
+    generate_agent_suffix,
 )
 from bot.web3.wallet_manager import generate_agent_wallet, generate_owner_wallet
-from bot.config import ADVANCED_MODE, AGENT_NAME, OWNER_EOA, OWNER_PRIVATE_KEY
+from bot.config import ADVANCED_MODE, AGENT_NAME, OWNER_EOA, OWNER_PRIVATE_KEY, AGENT_BASE_NAME, AGENT_COUNT
 from bot.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -314,8 +315,31 @@ def get_shared_owner_eoa() -> str:
 
 
 def get_multi_agent_names() -> list[str]:
-    """Parse AGENT_NAMES env var (comma-separated) into list."""
-    from bot.config import AGENT_NAMES
-    if not AGENT_NAMES:
-        return ["agent-1", "agent-2"]
-    return [n.strip() for n in AGENT_NAMES.split(",") if n.strip()]
+    """
+    Generate agent names from AGENT_BASE_NAME + AGENT_COUNT.
+    E.g., AGENT_BASE_NAME=Agus, AGENT_COUNT=3 → [Agusjkdfl, Aguskjfdlw, Agusxzyqw]
+    Each agent gets a random 5-char suffix.
+    """
+    base = AGENT_BASE_NAME.strip() if AGENT_BASE_NAME else "bot"
+    count = max(1, min(AGENT_COUNT, 10))  # cap at 10 agents
+
+    # Check if we have existing generated names in env (survive restarts)
+    existing = []
+    for i in range(count):
+        key = f"AGENT_{i+1}_NAME"
+        val = os.getenv(key, "")
+        if val:
+            existing.append(val)
+
+    if len(existing) == count:
+        return existing
+
+    # Generate new names with random suffix
+    names = []
+    for i in range(count):
+        suffix = generate_agent_suffix(5)
+        name = f"{base}{suffix}"
+        names.append(name)
+        update_env_file(f"AGENT_{i+1}_NAME", name)
+
+    return names
