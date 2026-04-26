@@ -308,19 +308,47 @@ def decide_action(view: dict, can_act: bool, memory_temp: dict = None) -> dict |
     if guardians and ep >= 2 and hp >= 35:
         target = _select_weakest(guardians)
         w_range = get_weapon_range(equipped)
+
+        # Pre-combat evaluation: damage, EP efficiency, flee check
+        my_dmg = calc_damage(atk, get_weapon_bonus(equipped),
+                            target.get("def", 5), region_weather)
+        guardian_dmg = calc_damage(target.get("atk", 10),
+                                   _estimate_enemy_weapon_bonus(target),
+                                   defense, region_weather)
+        ep_cost = 2
+
+        # EP efficiency: damage per EP spent
+        ep_eff = my_dmg / ep_cost if ep_cost > 0 else 0
+
+        # Flee if: enemy deals more damage AND we can't finish them fast
+        target_hp = target.get("hp", 100)
+        kill_rounds = (target_hp + my_dmg - 1) // my_dmg if my_dmg > 0 else 999
+        my_survival_rounds = hp // guardian_dmg if guardian_dmg > 0 else 999
+        flee_threshold = hp < 40 or my_survival_rounds < kill_rounds
+
+        if flee_threshold:
+            safe = _find_safe_region(connections, danger_ids, view)
+            if safe and ep >= _get_move_ep_cost(region_terrain, region_weather):
+                log.warning("⚔️ Guardian flee: my_dmg=%d vs guardian_dmg=%d, survival_rounds=%d < kill_rounds=%d",
+                            my_dmg, guardian_dmg, my_survival_rounds, kill_rounds)
+                return {"action": "move", "data": {"regionId": safe},
+                        "reason": f"GUARDIAN FLEE: unfavorable combat (HP={hp}, survive={my_survival_rounds}rounds vs kill={kill_rounds})"}
+
+        # Pre-heal if HP is moderate (35-55) and we have healing, combat is favorable
+        if 35 <= hp < 55 and hp < my_survival_rounds * guardian_dmg:
+            heal = _find_healing_item(inventory, critical=False)
+            if heal:
+                return {"action": "use_item", "data": {"itemId": heal["id"]},
+                        "reason": f"GUARDIAN PRE-HEAL: HP={hp} → pre-heal before engaging (combat eff={ep_eff:.1f})"}
+
+        # Fight if we deal more damage OR target is low HP (finish off)
         if _is_in_range(target, region_id, w_range, connections):
-            # v1.5.2: guardians fight back — check if we can take them
-            my_dmg = calc_damage(atk, get_weapon_bonus(equipped),
-                                target.get("def", 5), region_weather)
-            guardian_dmg = calc_damage(target.get("atk", 10),
-                                       _estimate_enemy_weapon_bonus(target),
-                                       defense, region_weather)
-            # Fight if we deal more damage OR target is low HP (finish off)
-            if my_dmg >= guardian_dmg or target.get("hp", 100) <= my_dmg * 3:
+            if my_dmg >= guardian_dmg or target_hp <= my_dmg * 3:
+                log.info("⚔️ Guardian farm: my_dmg=%d vs guardian_dmg=%d, EP_eff=%.1f, target_hp=%d",
+                         my_dmg, guardian_dmg, ep_eff, target_hp)
                 return {"action": "attack",
                         "data": {"targetId": target["id"], "targetType": "agent"},
-                        "reason": f"GUARDIAN FARM: HP={target.get('hp','?')} "
-                                  f"(120 sMoltz! dmg={my_dmg} vs {guardian_dmg})"}
+                        "reason": f"GUARDIAN FARM: HP={target_hp} (120 sMoltz! dmg={my_dmg} vs {guardian_dmg}, eff={ep_eff:.1f})"}
 
     # ── Priority 6: Favorable agent combat ────────────────────────
     # Be more aggressive when fewer agents remain (late game)
@@ -332,18 +360,70 @@ def decide_action(view: dict, can_act: bool, memory_temp: dict = None) -> dict |
     if enemies and ep >= 2 and hp >= hp_threshold:
         target = _select_weakest(enemies)
         w_range = get_weapon_range(equipped)
+
+        # Pre-combat evaluation
+        my_dmg = calc_damage(atk, get_weapon_bonus(equipped),
+                            target.get("def", 5), region_weather)
+        enemy_dmg = calc_damage(target.get("atk", 10),
+                                 _estimate_enemy_weapon_bonus(target),
+                                 defense, region_weather)
+        ep_cost = 2
+        ep_eff = my_dmg / ep_cost if ep_cost > 0 else 0
+
+        # Survival vs kill analysis
+        target_hp = target.get("hp", 100)
+        kill_rounds = (target_hp + my_dmg - 1) // my_dmg if my_dmg > 0 else 999
+        my_survival_rounds = hp // enemy_dmg if enemy_dmg > 0 else 999
+
+        # Flee if: enemy deals more AND we can't finish them before dying
+        flee_threshold = (my_dmg < enemy_dmg and my_survival_rounds < kill_rounds) or \
+                          (my_survival_rounds < 2 and hp < 50)
+        if flee_threshold:
+            safe = _find_safe_region(connections, danger_ids, view)
+            if safe and ep >= _get_move_ep_cost(region_terrain, region_weather):
+                log.warning("⚔️ Combat flee: my_dmg=%d vs enemy_dmg=%d, survive=%d < kill=%d",
+                            my_dmg, enemy_dmg, my_survival_rounds, kill_rounds)
+                return {"action": "move", "data": {"regionId": safe},
+                        "reason": f"COMBAT FLEE: unfavorable (HP={hp}, survive={my_survival_rounds}r vs kill={kill_rounds})"}
+
+        # Pre-heal if HP is moderate and combat is close
+        if 30 <= hp < 50 and my_dmg >= enemy_dmg and my_survival_rounds <= kill_rounds + 1:
+            heal = _find_healing_item(inventory, critical=False)
+            if heal:
+                return {"action": "use_item", "data": {"itemId": heal["id"]},
+                        "reason": f"COMBAT PRE-HEAL: HP={hp} → pre-heal before close fight (eff={ep_eff:.1f})"}
+
         if _is_in_range(target, region_id, w_range, connections):
-            my_dmg = calc_damage(atk, get_weapon_bonus(equipped),
-                                target.get("def", 5), region_weather)
-            enemy_dmg = calc_damage(target.get("atk", 10),
-                                     _estimate_enemy_weapon_bonus(target),
-                                     defense, region_weather)
             # Fight only if we deal more damage or target is low HP
-            if my_dmg > enemy_dmg or target.get("hp", 100) <= my_dmg * 2:
+            if my_dmg > enemy_dmg or target_hp <= my_dmg * 2:
+                log.info("⚔️ Agent combat: my_dmg=%d vs enemy_dmg=%d, EP_eff=%.1f, target_hp=%d",
+                         my_dmg, enemy_dmg, ep_eff, target_hp)
                 return {"action": "attack",
                         "data": {"targetId": target["id"], "targetType": "agent"},
-                        "reason": f"COMBAT: Target HP={target.get('hp', '?')}, "
-                                  f"dmg={my_dmg} vs enemy_dmg={enemy_dmg}"}
+                        "reason": f"COMBAT: Target HP={target_hp}, dmg={my_dmg} vs {enemy_dmg}, eff={ep_eff:.1f}"}
+
+    # ── Priority 6b: Ranged positioning — move toward distant targets ──
+    # If target is in range 2 (sniper) but not adjacent, move closer to save EP
+    # Only move if we have enough EP and target is not in danger zone
+    enemies = [a for a in visible_agents
+               if not a.get("isGuardian", False) and a.get("isAlive", True)
+               and a.get("id") != self_data.get("id")]
+    for target in enemies:
+        target_region = target.get("regionId", "")
+        if not target_region or target_region == region_id:
+            continue  # Already same region
+        w_range = get_weapon_range(equipped)
+        if w_range >= 2 and target_region not in danger_ids:
+            # Check if target is at range 2 (1 hop away, sniper can hit)
+            reachable_1hop = _get_regions_within_hops(region_id, 1, connections, set())
+            if target_region in reachable_1hop and ep >= _get_move_ep_cost(region_terrain, region_weather) + 2:
+                # Move to adjacent region to target — saves EP vs ranged attack from 2 away
+                if target_region not in danger_ids:
+                    log.info("⚔️ Positioning: moving closer to target at %s (EP=%d, cost=%d)",
+                             target_region[:8], ep, _get_move_ep_cost(region_terrain, region_weather))
+                    return {"action": "move", "data": {"regionId": target_region},
+                            "reason": f"POSITION: moving adjacent to target (sniper range optimization)"}
+            break  # Only do positioning for one target per turn
 
     # ── Priority 7: Monster farming ───────────────────────────────
     monsters = [m for m in visible_monsters if m.get("hp", 0) > 0]
@@ -609,6 +689,7 @@ def _is_in_range(target: dict, my_region: str, weapon_range: int,
                   connections=None) -> bool:
     """Check if target is in weapon range.
     Per combat-items.md: melee = same region, ranged = 1-2 regions.
+    Sniper range=2 uses BFS to find all reachable regions within N hops.
     """
     target_region = target.get("regionId", "")
 
@@ -630,8 +711,64 @@ def _is_in_range(target: dict, my_region: str, weapon_range: int,
         if target_region in adj_ids:
             return True
 
+        # Sniper range=2: use BFS to check 2-hop reachability
+        if weapon_range >= 2:
+            reachable = _get_regions_within_hops(my_region, weapon_range, connections, set())
+            if target_region in reachable:
+                return True
+
     # Target is out of weapon range
     return False
+
+
+def _get_regions_within_hops(start_region: str, max_hops: int,
+                              connections, visited: set = None) -> set:
+    """BFS to find all regions reachable within max_hops from start_region.
+    Used for sniper range=2 and strategic movement planning.
+    """
+    if visited is None:
+        visited = set()
+
+    reachable = set()
+    current_hop = 0
+    frontier = {start_region}
+
+    while current_hop < max_hops and frontier:
+        next_frontier = set()
+        for region_id in frontier:
+            if region_id in visited:
+                continue
+            visited.add(region_id)
+            reachable.add(region_id)
+
+            # Get connections from this region
+            conn_region = None
+            for conn in connections:
+                if isinstance(conn, dict) and conn.get("id") == region_id:
+                    conn_region = conn
+                    break
+                elif isinstance(conn, str) and conn == region_id:
+                    pass
+
+            # Find neighbors of this region
+            neighbors = set()
+            for conn in connections:
+                if isinstance(conn, dict):
+                    neighbor_id = conn.get("id", "")
+                    if neighbor_id and neighbor_id != region_id:
+                        neighbors.add(neighbor_id)
+                elif isinstance(conn, str):
+                    if conn != region_id:
+                        neighbors.add(conn)
+
+            for neighbor in neighbors:
+                if neighbor not in visited:
+                    next_frontier.add(neighbor)
+
+        frontier = next_frontier
+        current_hop += 1
+
+    return reachable
 
 
 def _select_facility(interactables: list, hp: int, ep: int) -> dict | None:
