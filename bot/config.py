@@ -53,6 +53,8 @@ MEMORY_FILE = MEMORY_DIR / "molty-royale-context.json"
 
 # ── Environment variables ─────────────────────────────────────────────
 AGENT_NAME = os.getenv("AGENT_NAME", "")
+AGENT_NAMES = os.getenv("AGENT_NAMES", "")  # comma-separated: "Agus,Budi,Susilo"
+MULTI_MODE = os.getenv("MULTI_MODE", "").lower() in ("true", "1", "yes")
 ADVANCED_MODE = os.getenv("ADVANCED_MODE", "true").lower() == "true"
 ROOM_MODE = os.getenv("ROOM_MODE", "free")  # free | auto | paid
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

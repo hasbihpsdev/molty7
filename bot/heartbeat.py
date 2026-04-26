@@ -30,12 +30,13 @@ log = get_logger(__name__)
 class Heartbeat:
     """Main heartbeat loop — runs forever, manages the full agent lifecycle."""
 
-    def __init__(self):
+    def __init__(self, name: str = None):
         self.api: MoltyAPI | None = None
         self.memory = AgentMemory()
         self.running = True
-        self._agent_key = "agent-1"  # Consistent dashboard key
-        self._agent_name = "Agent"
+        self._agent_key = f"agent-{name}" if name else "agent-1"
+        self._agent_name = name or "Agent"
+        self._agent_name_for_api = name  # passed to ensure_account_ready
 
     async def run(self):
         """Entry point — runs the heartbeat loop indefinitely."""
@@ -56,7 +57,7 @@ class Heartbeat:
         creds = None
         while self.running and not creds:
             try:
-                creds = await ensure_account_ready()
+                creds = await ensure_account_ready(agent_name=self._agent_name_for_api)
                 api_key = creds.get("api_key", "") or get_api_key()
                 if not api_key:
                     log.error("No API key available. Retrying in 60s...")
@@ -147,9 +148,21 @@ class Heartbeat:
 
     async def _handle_no_identity(self, me: dict):
         """Setup pipeline: wallet → whitelist → identity. Respects config flags."""
-        creds = load_credentials() or {}
-        owner_eoa = creds.get("owner_eoa", "")
-        agent_eoa = creds.get("agent_wallet_address", "")
+        from bot.setup.account_setup import get_shared_owner_eoa
+        from bot.credentials import load_credentials_by_name
+
+        owner_eoa = get_shared_owner_eoa()
+        agent_eoa = ""
+
+        if self._agent_name_for_api:
+            creds = load_credentials_by_name(self._agent_name_for_api) or {}
+            if not owner_eoa:
+                owner_eoa = creds.get("owner_eoa", "")
+            agent_eoa = creds.get("agent_wallet_address", "")
+        else:
+            creds = load_credentials() or {}
+            owner_eoa = creds.get("owner_eoa", owner_eoa)
+            agent_eoa = creds.get("agent_wallet_address", "")
 
         if not owner_eoa:
             log.error("Owner EOA not set. Re-run setup.")

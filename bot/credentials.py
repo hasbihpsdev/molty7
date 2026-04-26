@@ -134,3 +134,42 @@ def update_env_file(key: str, value: str):
     if not found:
         lines.append(f"{key}={value}")
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# ── Per-agent wallet functions (multi-agent mode) ──────────────────
+
+def get_agent_dir(agent_name: str) -> Path:
+    """Return per-agent directory: dev-agent/{agent_name}/"""
+    return DEV_AGENT_DIR / agent_name.lower().replace(" ", "-")
+
+
+def load_agent_wallet_by_name(agent_name: str) -> Optional[dict]:
+    """Load agent wallet for a specific agent name."""
+    agent_dir = get_agent_dir(agent_name)
+    path = agent_dir / "agent-wallet.json"
+    return _read_json(path)
+
+
+def save_agent_wallet_by_name(agent_name: str, address: str, private_key: str):
+    """Save agent wallet for a specific agent name."""
+    agent_dir = get_agent_dir(agent_name)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    path = agent_dir / "agent-wallet.json"
+    _write_secure(path, {"address": address, "privateKey": private_key})
+    log.info("Agent wallet saved for %s to %s", agent_name, path)
+
+
+def load_credentials_by_name(agent_name: str) -> Optional[dict]:
+    """Load credentials for a specific agent name."""
+    agent_dir = get_agent_dir(agent_name)
+    path = agent_dir / "credentials.json"
+    return _read_json(path)
+
+
+def save_credentials_by_name(agent_name: str, data: dict):
+    """Save credentials for a specific agent name."""
+    agent_dir = get_agent_dir(agent_name)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    path = agent_dir / "credentials.json"
+    _write_secure(path, data)
+    log.info("Credentials saved for %s to %s", agent_name, path)
